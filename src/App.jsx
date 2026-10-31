@@ -1,34 +1,107 @@
-﻿import { useState } from "react";
+﻿import { useEffect, useState } from "react";
 import TaskList from "./components/TaskList.jsx";
 import TaskForm from "./components/TaskForm.jsx";
+import LoginForm from "./components/LoginForm.jsx";
 import "./App.css";
 
-// Session 13: the tasks are typed in here, in the browser.
-// Session 14 replaces this array with a request to the live API.
-const STARTING_TASKS = [
-  { id: 1, title: "Set up PostgreSQL database", dueDate: "2026-10-20" },
-  { id: 2, title: "Deploy the API to Render", dueDate: "2026-10-21" },
-  { id: 3, title: "Build the React client", dueDate: "2026-10-22" },
-];
+// Session 14: the address of the Task Manager API, read from .env.
+// Vite puts the value in here when npm run dev starts.
+const API_URL = import.meta.env.VITE_API_URL;
+
+// Asks the API for every task. Returns the array, or throws.
+async function fetchTasks() {
+  const res = await fetch(`${API_URL}/api/tasks`);
+  if (!res.ok) {
+    throw new Error(`GET /api/tasks answered ${res.status}`);
+  }
+  return res.json();
+}
 
 function App() {
-  const [tasks, setTasks] = useState(STARTING_TASKS);
+  // The list starts empty. It is filled by GET /api/tasks.
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [token, setToken] = useState("");
+  const [loggedInAs, setLoggedInAs] = useState("");
 
-  function addTask(title) {
-    const newTask = {
-      id: Date.now(),
-      title: title,
-      dueDate: "",
-    };
-    setTasks([...tasks, newTask]);
+  // Runs after the first render only: the [] at the end is empty.
+  useEffect(() => {
+    async function loadTasks() {
+      try {
+        const data = await fetchTasks();
+        setTasks(data);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadTasks();
+  }, []);
+
+  async function logIn(email, password) {
+    const res = await fetch(`${API_URL}/api/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: email, password: password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.error);
+    }
+    setToken(data.token);
+    setLoggedInAs(email);
+  }
+
+  function logOut() {
+    setToken("");
+    setLoggedInAs("");
+  }
+
+  async function addTask(title) {
+    const res = await fetch(`${API_URL}/api/tasks`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ title: title, completed: false }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error);
+    }
+    // the new task is in the database now: ask for the list again
+    const data = await fetchTasks();
+    setTasks(data);
   }
 
   return (
     <main className="tasks">
       <h1>Task Manager</h1>
-      <p className="count">{tasks.length} tasks</p>
-      <TaskForm onAdd={addTask} />
-      <TaskList tasks={tasks} />
+
+      {token ? (
+        <p className="who">
+          <span>Logged in as {loggedInAs}</span>
+          <button onClick={logOut}>Log out</button>
+        </p>
+      ) : (
+        <LoginForm onLogin={logIn} />
+      )}
+
+      {token && <TaskForm onAdd={addTask} />}
+
+      {loading && <p className="count">Loading tasks...</p>}
+      {error && (
+        <p className="error">Could not load the tasks: {error}</p>
+      )}
+      {!loading && !error && (
+        <>
+          <p className="count">{tasks.length} tasks</p>
+          <TaskList tasks={tasks} />
+        </>
+      )}
     </main>
   );
 }
